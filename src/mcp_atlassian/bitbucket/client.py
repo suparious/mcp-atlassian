@@ -14,6 +14,7 @@ from mcp_atlassian.utils.logging import (
     log_config_param,
     mask_sensitive,
 )
+from mcp_atlassian.utils.rate_limit import configure_rate_limiting
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
 from .config import BitbucketConfig
@@ -104,6 +105,10 @@ class BitbucketClient:
         if self.config.no_proxy and isinstance(self.config.no_proxy, str):
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Bitbucket", "NO_PROXY", self.config.no_proxy)
+
+        # Configure rate limiting
+        configure_rate_limiting(self.bitbucket._session, "bitbucket")
+        logger.debug("Rate limiting configured for Bitbucket session")
 
         # Apply custom headers if configured
         if self.config.custom_headers:

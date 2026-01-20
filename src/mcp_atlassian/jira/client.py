@@ -16,6 +16,7 @@ from mcp_atlassian.utils.logging import (
     mask_sensitive,
 )
 from mcp_atlassian.utils.oauth import configure_oauth_session
+from mcp_atlassian.utils.rate_limit import configure_rate_limiting
 from mcp_atlassian.utils.ssl import configure_ssl_verification
 
 from .config import JiraConfig
@@ -151,6 +152,10 @@ class JiraClient(DevelopmentMixin):
         if self.config.no_proxy and isinstance(self.config.no_proxy, str):
             os.environ["NO_PROXY"] = self.config.no_proxy
             log_config_param(logger, "Jira", "NO_PROXY", self.config.no_proxy)
+
+        # Configure rate limiting
+        configure_rate_limiting(self.jira._session, "jira")
+        logger.debug("Rate limiting configured for Jira session")
 
         # Apply custom headers if configured
         if self.config.custom_headers:

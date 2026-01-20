@@ -271,7 +271,7 @@ def test_jira_mcp(mock_jira_fetcher, mock_base_jira_config):
             pass
 
     test_mcp = AtlassianMCP(
-        "TestJira", description="Test Jira MCP Server", lifespan=test_lifespan
+        name="TestJira", lifespan=test_lifespan
     )
     from src.mcp_atlassian.servers.jira import (
         add_comment,
@@ -351,8 +351,7 @@ def no_fetcher_test_jira_mcp(mock_base_jira_config):
             pass
 
     test_mcp = AtlassianMCP(
-        "NoFetcherTestJira",
-        description="No Fetcher Test Jira MCP Server",
+        name="NoFetcherTestJira",
         lifespan=no_fetcher_test_lifespan,
     )
     from src.mcp_atlassian.servers.jira import get_issue

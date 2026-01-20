@@ -1,14 +1,16 @@
 """Main FastMCP server setup for Atlassian integration."""
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from cachetools import TTLCache
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.tools import Tool as FastMCPTool
 from mcp.types import Tool as MCPTool
+from pydantic import Field
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -26,6 +28,7 @@ from mcp_atlassian.utils.logging import mask_sensitive
 from mcp_atlassian.utils.tools import get_enabled_tools, should_include_tool
 
 from .bitbucket import bitbucket_mcp
+from .composite import composite_mcp
 from .confluence import confluence_mcp
 from .context import MainAppContext
 from .jira import jira_mcp
@@ -357,6 +360,7 @@ main_mcp = AtlassianMCP(name="Atlassian MCP", lifespan=main_lifespan)
 main_mcp.mount(jira_mcp, prefix="jira")
 main_mcp.mount(confluence_mcp, prefix="confluence")
 main_mcp.mount(bitbucket_mcp, prefix="bitbucket")
+main_mcp.mount(composite_mcp, prefix="composite")
 
 
 @main_mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
@@ -365,3 +369,93 @@ async def _health_check_route(request: Request) -> JSONResponse:
 
 
 logger.info("Added /healthz endpoint for Kubernetes probes")
+
+
+# =============================================================================
+# Tool Discovery Meta-Tool
+# =============================================================================
+
+# Singleton instance for the tool discovery index
+_discovery_index: "ToolDiscoveryIndex | None" = None
+
+
+@main_mcp.tool(tags={"meta", "read"})
+async def discover_tools(
+    ctx: Context,
+    task: Annotated[
+        str,
+        Field(
+            description="Natural language description of what you want to do."
+        ),
+    ],
+    service_filter: Annotated[
+        str | None,
+        Field(
+            description='Filter by service - "jira", "confluence", or "bitbucket".',
+            default=None,
+        ),
+    ] = None,
+    include_write_tools: Annotated[
+        bool,
+        Field(
+            description="Include tools that modify data.",
+            default=True,
+        ),
+    ] = True,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum number of recommendations to return.",
+            default=7,
+            ge=1,
+            le=20,
+        ),
+    ] = 7,
+) -> str:
+    """Find the most relevant tools for a given task.
+
+    Use this to discover which tools are available and which ones
+    are most appropriate for your current task.
+
+    Args:
+        ctx: The FastMCP context.
+        task: Natural language description of what you want to do.
+        service_filter: Filter by service - "jira", "confluence", or "bitbucket".
+        include_write_tools: Include tools that modify data.
+        limit: Maximum number of recommendations to return.
+
+    Returns:
+        JSON array of recommended tools with relevance scores and reasons.
+    """
+    global _discovery_index
+
+    from mcp_atlassian.servers.discovery import ToolDiscoveryIndex
+
+    if _discovery_index is None:
+        _discovery_index = ToolDiscoveryIndex()
+
+    if not _discovery_index.is_built:
+        # Build index from main_mcp (includes mounted sub-servers)
+        await _discovery_index.build_index(main_mcp)
+
+    recommendations = _discovery_index.search(
+        query=task,
+        service_filter=service_filter,
+        include_write=include_write_tools,
+        limit=limit,
+    )
+
+    return json.dumps(
+        [
+            {
+                "name": r.name,
+                "description": r.description,
+                "relevance_score": round(r.relevance_score, 2),
+                "match_reasons": r.match_reasons,
+                "service": r.service,
+                "is_write_operation": r.is_write,
+            }
+            for r in recommendations
+        ],
+        indent=2,
+    )
